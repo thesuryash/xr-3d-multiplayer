@@ -85,6 +85,7 @@ namespace XRMultiplayer
         {
             m_Status.Value = "Checking For Existing Lobbies.";
             Utils.Log($"{k_DebugPrepend}{m_Status.Value}");
+            DiagnosticLogger.Log(DiagnosticLogCategory.Lobby, m_Status.Value);
             Lobby lobby;
             try
             {
@@ -92,6 +93,7 @@ namespace XRMultiplayer
                 lobby = await LobbyService.Instance.QuickJoinLobbyAsync(GetQuickJoinFilterOptions());
                 await SetupRelay(lobby);
                 ConnectedToLobby(lobby);
+                DiagnosticLogger.Log(DiagnosticLogCategory.Lobby, $"Quick joined lobby {lobby.Id}");
 
                 if (lobby != null)
                 {
@@ -103,6 +105,7 @@ namespace XRMultiplayer
             {
                 m_Status.Value = "No Available Lobbies. Creating New Lobby.";
                 Utils.Log($"{k_DebugPrepend}{m_Status.Value}");
+                DiagnosticLogger.Log(DiagnosticLogCategory.Lobby, m_Status.Value);
             }
 
             // If no existing Lobbies, then create a new one.
@@ -124,6 +127,7 @@ namespace XRMultiplayer
                 lobby = await GetLobby(lobby, roomCode);
                 await SetupRelay(lobby);
                 ConnectedToLobby(lobby);
+                DiagnosticLogger.Log(DiagnosticLogCategory.Lobby, $"Joined lobby {lobby.Id}");
 
                 return lobby;
 
@@ -145,6 +149,7 @@ namespace XRMultiplayer
                         failureMessage = e.Message;
                 }
                 Utils.Log($"{k_DebugPrepend}{failureMessage}\n\n{e}", 1);
+                DiagnosticLogger.Log(DiagnosticLogCategory.Lobby, $"Join lobby failed: {failureMessage}", 1);
                 OnLobbyFailed?.Invoke($"{failureMessage}");
                 return null;
             }
@@ -204,6 +209,7 @@ namespace XRMultiplayer
                 // RATE LIMIT: 2 request per 6 seconds
                 var lobby = await LobbyService.Instance.CreateLobbyAsync(lobbyName, playerCount, options);
                 Utils.Log($"{k_DebugPrepend}Created Lobby with Join Code: {joinCode}, Region: {alloc.Region}, Build ID: {Application.version}, Scene: {SceneManager.GetActiveScene().name}, Editor: {hideEditorFromLobby}");
+                DiagnosticLogger.Log(DiagnosticLogCategory.Lobby, $"Created lobby {lobby.Id} ({lobbyName}) in {alloc.Region}");
 
                 // Stop the heartbeat routine if one exists, and starts a new one. This keeps the lobby active for visibility
                 if (m_HeartBeatRoutine != null) StopCoroutine(m_HeartBeatRoutine);
@@ -219,6 +225,7 @@ namespace XRMultiplayer
             {
                 string failureMessage = "Failed to Create Lobby. Please try again.";
                 Utils.Log($"{k_DebugPrepend}{failureMessage}\n\n{e}", 1);
+                DiagnosticLogger.Log(DiagnosticLogCategory.Lobby, $"Create lobby failed: {failureMessage}", 1);
                 // Debug.LogWarning($"[XRMPT] {failureMessage}\n\n{e}");
                 OnLobbyFailed?.Invoke(failureMessage);
                 return null;

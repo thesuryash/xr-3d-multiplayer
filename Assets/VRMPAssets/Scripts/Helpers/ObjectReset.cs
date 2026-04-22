@@ -26,6 +26,7 @@ namespace UnityEngine.XR.Content.Interaction
         {
             Transform currentTransform = networkBaseInteractable.transform;
             networkBaseInteractable.GetComponent<NetworkTransform>().Teleport(m_ResetTransform.position, m_ResetTransform.rotation, networkBaseInteractable.transform.localScale);
+            DiagnosticLogger.Log(DiagnosticLogCategory.Reset, $"Trigger reset applied to {networkBaseInteractable.name}");
 
             var rigidBody = currentTransform.GetComponentInChildren<Rigidbody>();
             if (rigidBody != null)
