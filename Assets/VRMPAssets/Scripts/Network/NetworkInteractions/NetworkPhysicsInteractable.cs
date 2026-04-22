@@ -1,6 +1,7 @@
 using System.Collections;
 using Unity.Netcode;
 using UnityEngine;
+using UnityEngine.Events;
 using UnityEngine.XR.Interaction.Toolkit;
 using UnityEngine.XR.Interaction.Toolkit.Interactables;
 using UnityEngine.XR.Interaction.Toolkit.Interactors;
@@ -25,6 +26,30 @@ namespace XRMultiplayer
         /// </summary>
         [SerializeField, Tooltip("Determines the minimum velocity magnitude required to request ownership on collision.")]
         protected float m_MinExchangeVelocityMagitude = .025f;
+
+        [SerializeField, Tooltip("Minimum release speed before applying throw tuning logic.")]
+        float m_ThrowVelocityThreshold = 1.25f;
+
+        [SerializeField, Tooltip("Speed threshold used to auto unlock stackable objects when bumped.")]
+        float m_StackUnlockVelocityThreshold = 0.6f;
+
+        [SerializeField, Tooltip("When true, object locks in place after settling following a drop.")]
+        bool m_EnableStackLocking = true;
+
+        [SerializeField, Tooltip("Delay after release before stack lock checks start.")]
+        float m_StackLockDelay = 0.2f;
+
+        [SerializeField, Tooltip("How long velocity must remain low before locking as stacked.")]
+        float m_StackSleepDuration = 0.45f;
+
+        [SerializeField, Tooltip("Velocity magnitude considered still for stack lock behavior.")]
+        float m_StackSleepVelocity = 0.08f;
+
+        [Header("Interaction Events")]
+        public UnityEvent OnGrabbed;
+        public UnityEvent OnReleased;
+        public UnityEvent OnThrown;
+        public UnityEvent<Collision> OnCollided;
 
         /// <summary>
         /// Sets the <see cref="Rigidbody.constraints"/> to <see cref="RigidbodyConstraints.FreezeAll"/> on spawn.
@@ -71,6 +96,31 @@ namespace XRMultiplayer
         int m_CurrentFrame = 0;
         Vector3 m_PrevPos;
 
+        bool m_PendingStackLock;
+        float m_ReleasedTime;
+        float m_StackStillTimer;
+
+        public void ApplyTuningPreset(NetworkedModelItemPhysicsPreset preset)
+        {
+            if (preset == null)
+                return;
+
+            m_MinExchangeVelocityMagitude = preset.minExchangeVelocityMagnitude;
+            m_ThrowVelocityThreshold = preset.throwVelocityThreshold;
+            m_StackUnlockVelocityThreshold = preset.stackUnlockVelocityThreshold;
+            m_EnableStackLocking = preset.enableStackLocking;
+            m_StackLockDelay = preset.stackLockDelay;
+            m_StackSleepDuration = preset.stackSleepDuration;
+            m_StackSleepVelocity = preset.stackSleepVelocity;
+
+            if (m_Rigidbody == null && !TryGetComponent(out m_Rigidbody))
+                return;
+
+            m_Rigidbody.mass = preset.mass;
+            m_Rigidbody.drag = preset.drag;
+            m_Rigidbody.angularDrag = preset.angularDrag;
+        }
+
         /// <inheritdoc/>
         public override void Awake()
         {
@@ -97,6 +147,25 @@ namespace XRMultiplayer
             m_PrevPos = transform.position;
 
             m_AverageVelocity = GetWorldVelocity();
+
+            if (!IsOwner || !m_EnableStackLocking || !m_PendingStackLock || m_Rigidbody == null || baseInteractable.isSelected)
+                return;
+
+            if (Time.time < m_ReleasedTime + m_StackLockDelay)
+                return;
+
+            if (m_Rigidbody.velocity.magnitude <= m_StackSleepVelocity)
+            {
+                m_StackStillTimer += Time.deltaTime;
+                if (m_StackStillTimer >= m_StackSleepDuration)
+                {
+                    LockForStacking();
+                }
+            }
+            else
+            {
+                m_StackStillTimer = 0f;
+            }
         }
 
         void FixedUpdate()
@@ -152,6 +221,12 @@ namespace XRMultiplayer
             if (IsOwner && newValue && m_LockedOnSpawn.Value)
             {
                 m_LockedOnSpawn.Value = false;
+            }
+
+            if (newValue)
+            {
+                UnlockFromStacking();
+                OnGrabbed?.Invoke();
             }
 
             if (!newValue)
@@ -260,6 +335,15 @@ namespace XRMultiplayer
                         m_Rigidbody.isKinematic = false;
                     }
                 }
+
+                m_ReleasedTime = Time.time;
+                m_StackStillTimer = 0f;
+                m_PendingStackLock = m_EnableStackLocking;
+                OnReleased?.Invoke();
+                if (m_AverageVelocity.magnitude >= m_ThrowVelocityThreshold)
+                {
+                    OnThrown?.Invoke();
+                }
             }
         }
 
@@ -295,6 +379,13 @@ namespace XRMultiplayer
         /// <inheritdoc/>
         void OnCollisionEnter(Collision collision)
         {
+            OnCollided?.Invoke(collision);
+
+            if (IsOwner && m_EnableStackLocking && m_Rigidbody != null && m_Rigidbody.constraints == RigidbodyConstraints.FreezeAll && collision.relativeVelocity.magnitude >= m_StackUnlockVelocityThreshold)
+            {
+                UnlockFromStacking();
+            }
+
             if (!IsOwner || !m_AllowCollisionOwnershipExchange) return;
             NetworkPhysicsInteractable networkPhysicsInteractable = collision.transform.GetComponentInParent<NetworkPhysicsInteractable>();
             if (networkPhysicsInteractable != null && (isInteracting || IsMovingFaster(networkPhysicsInteractable.m_Rigidbody)))
@@ -321,6 +412,31 @@ namespace XRMultiplayer
         public bool OwnershipTransferBlocked()
         {
             return isInteracting || IsOwner || m_RequestingOwnership || m_LockedOnSpawn.Value || !m_AllowCollisionOwnershipExchange || !NetworkObject.IsSpawned || baseInteractable.isSelected || m_ResettingObject.Value;
+        }
+
+        void LockForStacking()
+        {
+            m_PendingStackLock = false;
+            m_StackStillTimer = 0f;
+            m_LockedOnSpawn.Value = true;
+            m_Rigidbody.velocity = Vector3.zero;
+            m_Rigidbody.angularVelocity = Vector3.zero;
+            m_Rigidbody.constraints = RigidbodyConstraints.FreezeAll;
+        }
+
+        public void UnlockFromStacking()
+        {
+            m_PendingStackLock = false;
+            m_StackStillTimer = 0f;
+            if (!IsOwner || m_Rigidbody == null)
+                return;
+
+            if (m_Rigidbody.constraints == RigidbodyConstraints.FreezeAll)
+            {
+                m_Rigidbody.constraints = RigidbodyConstraints.None;
+            }
+
+            m_LockedOnSpawn.Value = false;
         }
 
         /// <summary>
