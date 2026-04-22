@@ -50,6 +50,11 @@ namespace XRMultiplayer
         public Action<Color> onColorUpdated;
 
         /// <summary>
+        /// Action called when avatar identity/customization changes.
+        /// </summary>
+        public Action<string, string> onAvatarStateUpdated;
+
+        /// <summary>
         /// Action called when the Local Player is finished spawning in.
         /// </summary>
         public Action onSpawnedLocal;
@@ -93,6 +98,18 @@ namespace XRMultiplayer
         public Color playerColor { get => m_PlayerColor.Value; }
         readonly NetworkVariable<Color> m_PlayerColor = new(Color.white, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Owner);
 
+        /// <summary>
+        /// Avatar ID exposed for all clients.
+        /// </summary>
+        public string avatarId => m_AvatarId.Value.ToString();
+        readonly NetworkVariable<FixedString128Bytes> m_AvatarId = new("", NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Owner);
+
+        /// <summary>
+        /// Avatar customization payload (json/key-value data).
+        /// </summary>
+        public string avatarCustomization => m_AvatarCustomization.Value.ToString();
+        readonly NetworkVariable<FixedString512Bytes> m_AvatarCustomization = new("", NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Owner);
+
         [HideInInspector] public readonly NetworkVariable<bool> selfMuted = new(false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Owner);
 
 
@@ -101,11 +118,6 @@ namespace XRMultiplayer
         /// </summary>
         [Header("Player Name Tag"), SerializeField, Tooltip("Player Name Tag.")] protected bool m_UpdateObjectName = true;
 
-
-        // /// <summary>
-        // /// Head Renderers to change rendering mode for local players.
-        // /// </summary>
-        // [SerializeField, Tooltip("Head Renderers to change rendering mode for local players.")] protected Renderer[] m_HeadRends;
 
         /// <summary>
         /// Hand Objects to be disabled for the local player.
@@ -173,6 +185,8 @@ namespace XRMultiplayer
         {
             m_PlayerName.OnValueChanged += UpdatePlayerName;
             m_PlayerColor.OnValueChanged += UpdatePlayerColor;
+            m_AvatarId.OnValueChanged += UpdateAvatarState;
+            m_AvatarCustomization.OnValueChanged += UpdateAvatarState;
         }
 
         ///<inheritdoc/>
@@ -180,6 +194,8 @@ namespace XRMultiplayer
         {
             m_PlayerName.OnValueChanged -= UpdatePlayerName;
             m_PlayerColor.OnValueChanged -= UpdatePlayerColor;
+            m_AvatarId.OnValueChanged -= UpdateAvatarState;
+            m_AvatarCustomization.OnValueChanged -= UpdateAvatarState;
         }
 
         ///<inheritdoc/>
@@ -297,12 +313,33 @@ namespace XRMultiplayer
 
             m_PlayerColor.Value = XRINetworkGameManager.LocalPlayerColor.Value;
             m_PlayerName.Value = new FixedString128Bytes(XRINetworkGameManager.LocalPlayerName.Value);
+
+            AvatarProfile profile = AvatarProfilePreferences.Load();
+            m_AvatarId.Value = new FixedString128Bytes(profile.avatarId);
+            m_AvatarCustomization.Value = new FixedString512Bytes(profile.customization);
+
             XRINetworkGameManager.LocalPlayerColor.Subscribe(UpdateLocalPlayerColor);
             XRINetworkGameManager.LocalPlayerName.Subscribe(UpdateLocalPlayerName);
             m_VoiceChat.selfMuted.Subscribe(SelfMutedChanged);
             m_VoiceChat.ToggleSelfMute(true, true);
 
             onSpawnedLocal?.Invoke();
+        }
+
+        /// <summary>
+        /// Update local avatar profile and synchronize to all clients.
+        /// </summary>
+        public void SetLocalAvatarProfile(string id, string customization)
+        {
+            if (!IsOwner)
+                return;
+
+            id ??= string.Empty;
+            customization ??= string.Empty;
+
+            AvatarProfilePreferences.Save(id, customization);
+            m_AvatarId.Value = new FixedString128Bytes(id);
+            m_AvatarCustomization.Value = new FixedString512Bytes(customization);
         }
 
         /// <summary>
@@ -345,6 +382,7 @@ namespace XRMultiplayer
             // Update Color and Name.
             UpdatePlayerColor(Color.white, m_PlayerColor.Value);
             UpdatePlayerName(new FixedString128Bytes(""), m_PlayerName.Value);
+            NotifyAvatarStateChanged();
 
             // Check if WorldCanvas exists
             WorldCanvas worldCanvas = FindFirstObjectByType<WorldCanvas>();
@@ -387,6 +425,21 @@ namespace XRMultiplayer
         void UpdatePlayerColor(Color oldColor, Color newColor)
         {
             onColorUpdated?.Invoke(newColor);
+        }
+
+        void UpdateAvatarState(FixedString128Bytes oldId, FixedString128Bytes newId)
+        {
+            NotifyAvatarStateChanged();
+        }
+
+        void UpdateAvatarState(FixedString512Bytes oldData, FixedString512Bytes newData)
+        {
+            NotifyAvatarStateChanged();
+        }
+
+        void NotifyAvatarStateChanged()
+        {
+            onAvatarStateUpdated?.Invoke(avatarId, avatarCustomization);
         }
 
         void UpdatePlayerVoiceEnergy(float current)
