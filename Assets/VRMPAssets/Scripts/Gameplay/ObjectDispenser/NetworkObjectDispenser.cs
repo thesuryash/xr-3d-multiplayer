@@ -338,8 +338,15 @@ namespace XRMultiplayer
         }
 
         [Rpc(SendTo.Server)]
-        public void SpawnRandomRpc(Vector3 spawnPosition, Quaternion spawnRotation)
+        public void SpawnRandomRpc(Vector3 spawnPosition, Quaternion spawnRotation, RpcParams rpcParams = default)
         {
+            ulong requester = rpcParams.Receive.SenderClientId;
+            if (!AuthorityPolicy.CanSpawn(requester, Time.unscaledTime, out string denyReason))
+            {
+                Utils.Log($"[AuthorityPolicy] Spawn denied for client {requester}. {denyReason}");
+                return;
+            }
+
             var spawnObject = m_PersistentPanel.dispenserSlots[UnityEngine.Random.Range(0, m_PersistentPanel.dispenserSlots.Length)].spawnableInteractablePrefab;
             if (UnityEngine.Random.value < .85f)
             {
@@ -350,8 +357,12 @@ namespace XRMultiplayer
 
             NetworkPhysicsInteractable spawnedObject = Instantiate(spawnObject.gameObject, spawnPosition, spawnRotation).GetComponent<NetworkPhysicsInteractable>();
             spawnedObject.spawnLocked = false;
-            spawnedObject.NetworkObject.Spawn();
+            if (!spawnedObject.TryGetComponent(out NetworkObjectLifetime _))
+            {
+                spawnedObject.gameObject.AddComponent<NetworkObjectLifetime>();
+            }
 
+            spawnedObject.NetworkObject.Spawn();
             m_ActiveInteractables.Add(spawnedObject.GetComponent<NetworkBaseInteractable>());
             m_CurrentCapacityNetworked.Value = m_ActiveInteractables.Count;
         }

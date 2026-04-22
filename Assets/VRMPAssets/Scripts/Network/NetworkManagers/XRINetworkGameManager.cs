@@ -643,6 +643,76 @@ namespace XRMultiplayer
             await DisconnectAsync();
         }
 
+
+        /// <summary>
+        /// Host moderation: disconnect a target player from the current session.
+        /// </summary>
+        public void RequestKickPlayer(ulong targetClientId)
+        {
+            if (!IsHost) return;
+            KickPlayerServerRpc(targetClientId);
+        }
+
+        /// <summary>
+        /// Host moderation: freeze/unfreeze a physics object by network id.
+        /// </summary>
+        public void RequestFreezeObject(ulong objectNetworkId, bool freeze)
+        {
+            if (!IsHost) return;
+            FreezeObjectServerRpc(objectNetworkId, freeze);
+        }
+
+        /// <summary>
+        /// Host moderation: clear despawnable scene objects.
+        /// </summary>
+        public void RequestClearSceneObjects()
+        {
+            if (!IsHost) return;
+            ClearSceneObjectsServerRpc();
+        }
+
+        [ServerRpc(RequireOwnership = false)]
+        void KickPlayerServerRpc(ulong targetClientId, ServerRpcParams rpcParams = default)
+        {
+            if (rpcParams.Receive.SenderClientId != NetworkManager.ServerClientId) return;
+            if (targetClientId == NetworkManager.ServerClientId) return;
+            NetworkManager.DisconnectClient(targetClientId);
+        }
+
+        [ServerRpc(RequireOwnership = false)]
+        void FreezeObjectServerRpc(ulong objectNetworkId, bool freeze, ServerRpcParams rpcParams = default)
+        {
+            if (rpcParams.Receive.SenderClientId != NetworkManager.ServerClientId) return;
+
+            if (!NetworkManager.SpawnManager.SpawnedObjects.TryGetValue(objectNetworkId, out NetworkObject networkObject))
+                return;
+
+            if (networkObject.TryGetComponent(out Rigidbody rb))
+            {
+                rb.constraints = freeze ? RigidbodyConstraints.FreezeAll : RigidbodyConstraints.None;
+                rb.velocity = Vector3.zero;
+                rb.angularVelocity = Vector3.zero;
+            }
+        }
+
+        [ServerRpc(RequireOwnership = false)]
+        void ClearSceneObjectsServerRpc(ServerRpcParams rpcParams = default)
+        {
+            if (rpcParams.Receive.SenderClientId != NetworkManager.ServerClientId) return;
+
+            var objects = FindObjectsByType<NetworkPhysicsInteractable>(FindObjectsSortMode.None);
+            foreach (var networkInteractable in objects)
+            {
+                if (networkInteractable == null || !networkInteractable.IsSpawned)
+                    continue;
+
+                if (!networkInteractable.NetworkObject.IsSceneObject)
+                {
+                    networkInteractable.NetworkObject.Despawn(true);
+                }
+            }
+        }
+
         /// <summary>
         /// Awaitable Disconnect call, used for Hot Joining.
         /// </summary>

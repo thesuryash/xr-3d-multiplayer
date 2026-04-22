@@ -12,10 +12,6 @@ public class NetworkProjectileLauncher : NetworkBehaviour
     [Tooltip("The point that the project is created")]
     Transform m_StartPoint = null;
 
-    // [SerializeField]
-    // [Tooltip("The projectile that's created")]
-    // GameObject m_ProjectilePrefab = null;
-
     [SerializeField]
     [Tooltip("The speed at which the projectile is launched")]
     float m_LaunchSpeed = 1000f;
@@ -65,38 +61,56 @@ public class NetworkProjectileLauncher : NetworkBehaviour
     /// <param name="activate"></param>
     public void FireLauncher(bool activate)
     {
-        if (activate)
+        if (!activate)
+            return;
+
+        Color fireColor = m_BackupColor;
+        if (m_ProjectileColor.Value != default)
         {
-            Color fireColor = m_BackupColor;
-            if (m_ProjectileColor.Value != default)
-            {
-                fireColor = m_ProjectileColor.Value;
-            }
+            fireColor = m_ProjectileColor.Value;
+        }
 
-            GameObject newObject = m_ProjectilePooler.GetItem();
-            if (!newObject.TryGetComponent(out Projectile projectile))
-            {
-                Utils.Log("Projectile component not found on projectile object.", 1);
-                return;
-            }
+        RequestFireServerRpc(m_StartPoint.position, m_StartPoint.forward * m_LaunchSpeed, fireColor);
+    }
 
-            projectile.transform.SetPositionAndRotation(m_StartPoint.position, m_StartPoint.rotation);
-            projectile.Setup(IsOwner, fireColor, OnProjectileDestroy);
-            m_AudioSource.PlayOneShot(m_AudioClip);
+    [ServerRpc(RequireOwnership = false)]
+    void RequestFireServerRpc(Vector3 spawnPosition, Vector3 requestedImpulse, Color fireColor, ServerRpcParams rpcParams = default)
+    {
+        ulong requester = rpcParams.Receive.SenderClientId;
+        if (!AuthorityPolicy.ValidateThrowImpulse(requester, requestedImpulse, Time.unscaledTime, out Vector3 validatedImpulse, out string denyReason))
+        {
+            Utils.Log($"[AuthorityPolicy] Launcher throw denied for client {requester}. {denyReason}");
+            return;
+        }
 
-            if (newObject.TryGetComponent(out Rigidbody rigidBody))
-            {
-                rigidBody.isKinematic = true;
-                rigidBody.isKinematic = false;
-                Vector3 force = m_StartPoint.forward * m_LaunchSpeed;
-                rigidBody.AddForce(force);
-            }
+        FireLauncherClientRpc(spawnPosition, validatedImpulse, fireColor);
+    }
 
-            m_ProjectileQueue.Add(projectile);
-            if (m_ProjectileQueue.Count > m_MaxProjectilesAllowed)
-            {
-                m_ProjectileQueue[0].ResetProjectile();
-            }
+    [ClientRpc]
+    void FireLauncherClientRpc(Vector3 spawnPosition, Vector3 impulse, Color fireColor)
+    {
+        GameObject newObject = m_ProjectilePooler.GetItem();
+        if (!newObject.TryGetComponent(out Projectile projectile))
+        {
+            Utils.Log("Projectile component not found on projectile object.", 1);
+            return;
+        }
+
+        projectile.transform.SetPositionAndRotation(spawnPosition, Quaternion.LookRotation(impulse.normalized, Vector3.up));
+        projectile.Setup(IsOwner, fireColor, OnProjectileDestroy);
+        m_AudioSource.PlayOneShot(m_AudioClip);
+
+        if (newObject.TryGetComponent(out Rigidbody rigidBody))
+        {
+            rigidBody.isKinematic = true;
+            rigidBody.isKinematic = false;
+            rigidBody.AddForce(impulse);
+        }
+
+        m_ProjectileQueue.Add(projectile);
+        if (m_ProjectileQueue.Count > m_MaxProjectilesAllowed)
+        {
+            m_ProjectileQueue[0].ResetProjectile();
         }
     }
 
