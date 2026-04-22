@@ -480,17 +480,22 @@ namespace XRMultiplayer
         [ServerRpc(RequireOwnership = false)]
         public virtual void OnSelectServerRpc(bool selected, ulong clientId)
         {
-            OnSelectClientRpc(selected, clientId);
-
-            // If we are not the owner and we are selecting the object, request to change ownership
             if (selected && OwnerClientId != clientId)
             {
+                if (!AuthorityPolicy.CanAcquireOwnership(this, clientId, out string denyReason))
+                {
+                    Utils.Log($"[AuthorityPolicy] Ownership denied for {gameObject.name} from client {clientId}. {denyReason}");
+                    return;
+                }
+
                 ulong previousOwner = OwnerClientId;
                 NetworkObject.ChangeOwnership(clientId);
                 SetOwnershipReason("SelectGrab");
                 NetworkDiagnosticsService.Instance?.ReportOwnershipChange(NetworkObject, previousOwner, clientId, m_LastOwnershipTransferReason);
             }
 
+            OnSelectClientRpc(selected, clientId);
+            AuthorityPolicy.RegisterSelect(clientId, selected);
             SelectNetworkedEventServer.Invoke(selected);
         }
 

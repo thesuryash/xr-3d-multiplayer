@@ -99,6 +99,17 @@ namespace XRMultiplayer
             m_AverageVelocity = GetWorldVelocity();
         }
 
+        void FixedUpdate()
+        {
+            if (!IsServer || !IsSpawned) return;
+
+            if (AuthorityPolicy.ShouldRollbackState(transform, m_Rigidbody))
+            {
+                Utils.Log($"[AuthorityPolicy] Resetting invalid physics state on {gameObject.name}.");
+                ResetObjectPhysics();
+            }
+        }
+
         Vector3 GetWorldVelocity()
         {
             Vector3 averageVelocity = Vector3.zero;
@@ -334,16 +345,23 @@ namespace XRMultiplayer
             }
 
             RelinquishOwnershipAfterTime();
-            RequestOwnershipRpc(NetworkManager.Singleton.LocalClientId);
+            RequestOwnershipRpc();
             if (checkOwnershipRoutine != null) StopCoroutine(checkOwnershipRoutine);
             checkOwnershipRoutine = CheckOwnershipRoutine();
             StartCoroutine(checkOwnershipRoutine);
         }
 
         [Rpc(SendTo.Server)]
-        void RequestOwnershipRpc(ulong clientId)
+        void RequestOwnershipRpc(RpcParams rpcParams = default)
         {
-            NetworkObject.ChangeOwnership(clientId);
+            ulong requester = rpcParams.Receive.SenderClientId;
+            if (!AuthorityPolicy.CanAcquireOwnership(this, requester, out string denyReason))
+            {
+                Utils.Log($"[AuthorityPolicy] Collision ownership denied for {gameObject.name} from client {requester}. {denyReason}");
+                return;
+            }
+
+            NetworkObject.ChangeOwnership(requester);
         }
 
         /// <summary>
