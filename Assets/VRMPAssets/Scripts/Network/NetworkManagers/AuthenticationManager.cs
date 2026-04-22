@@ -66,6 +66,7 @@ namespace XRMultiplayer
 
                 options.SetProfile(playerId);
                 Utils.Log($"{k_DebugPrepend}Signing in with profile {playerId}");
+                DiagnosticLogger.Log(DiagnosticLogCategory.Authentication, $"Initializing services with profile {playerId}");
 
                 // Initialize UGS using any options defined
                 await UnityServices.InitializeAsync(options);
@@ -76,10 +77,12 @@ namespace XRMultiplayer
             {
                 // Signing in anonymously for simplicity sake.
                 await AuthenticationService.Instance.SignInAnonymouslyAsync();
+                DiagnosticLogger.Log(DiagnosticLogCategory.Authentication, "Signed in anonymously.");
             }
 
             // Cache PlayerId.
             XRINetworkGameManager.AuthenicationId = AuthenticationService.Instance.PlayerId;
+            DiagnosticLogger.Log(DiagnosticLogCategory.Authentication, $"Authentication complete with player id {XRINetworkGameManager.AuthenicationId}");
             return UnityServices.State == ServicesInitializationState.Initialized;
         }
 

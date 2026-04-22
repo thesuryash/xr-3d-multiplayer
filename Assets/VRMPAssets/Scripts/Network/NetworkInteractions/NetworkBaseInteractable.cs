@@ -28,6 +28,9 @@ namespace XRMultiplayer
     [DisallowMultipleComponent]
     public class NetworkBaseInteractable : NetworkBehaviour, IXRSelectFilter, IXRHoverFilter
     {
+        public string lastOwnershipTransferReason => m_LastOwnershipTransferReason;
+        string m_LastOwnershipTransferReason = "Initial";
+
         /// <summary>
         /// Allow users to take ownership of currently controlled objects.
         /// </summary>
@@ -321,6 +324,8 @@ namespace XRMultiplayer
         {
             transform.SetPositionAndRotation(m_OriginalPose.position, m_OriginalPose.rotation);
             transform.localScale = m_OriginalScale;
+            DiagnosticLogger.Log(DiagnosticLogCategory.Reset, $"Reset object state for {name}");
+            InteractionTimelineRecorder.Instance?.RecordEvent("reset", gameObject, NetworkObjectId, OwnerClientId, GetVelocity(), "ResetObject");
         }
 
         /// <summary>
@@ -407,6 +412,7 @@ namespace XRMultiplayer
             if (CanHold())
             {
                 Selected(true);
+                InteractionTimelineRecorder.Instance?.RecordEvent("select_enter_local", gameObject, NetworkObjectId, NetworkManager.Singleton.LocalClientId, GetVelocity());
                 if (syncSelect)
                 {
                     OnSelectServerRpc(true, NetworkManager.Singleton.LocalClientId);
@@ -439,6 +445,7 @@ namespace XRMultiplayer
                 return;
 
             Selected(false);
+            InteractionTimelineRecorder.Instance?.RecordEvent("select_exit_local", gameObject, NetworkObjectId, NetworkManager.Singleton.LocalClientId, GetVelocity());
 
             if (syncSelect)
             {
@@ -457,7 +464,12 @@ namespace XRMultiplayer
         void ResetObjectToHostServerRpc()
         {
             if (NetworkObject.OwnerClientId != NetworkManager.Singleton.LocalClientId)
+            {
+                var previousOwner = NetworkObject.OwnerClientId;
                 NetworkObject.ChangeOwnership(NetworkManager.Singleton.LocalClientId);
+                SetOwnershipReason("RelinquishTimeout");
+                NetworkDiagnosticsService.Instance?.ReportOwnershipChange(NetworkObject, previousOwner, NetworkManager.Singleton.LocalClientId, m_LastOwnershipTransferReason);
+            }
         }
 
         /// <summary>
@@ -476,7 +488,10 @@ namespace XRMultiplayer
                     return;
                 }
 
+                ulong previousOwner = OwnerClientId;
                 NetworkObject.ChangeOwnership(clientId);
+                SetOwnershipReason("SelectGrab");
+                NetworkDiagnosticsService.Instance?.ReportOwnershipChange(NetworkObject, previousOwner, clientId, m_LastOwnershipTransferReason);
             }
 
             OnSelectClientRpc(selected, clientId);
@@ -514,6 +529,7 @@ namespace XRMultiplayer
             if (!IsOwner) return;
 
             Activated(true);
+            InteractionTimelineRecorder.Instance?.RecordEvent("activate_local", gameObject, NetworkObjectId, NetworkManager.Singleton.LocalClientId, GetVelocity());
             if (syncActivate)
             {
                 OnActivateServerRpc(true, NetworkManager.Singleton.LocalClientId);
@@ -529,6 +545,7 @@ namespace XRMultiplayer
             if (!IsOwner) return;
 
             Activated(false);
+            InteractionTimelineRecorder.Instance?.RecordEvent("deactivate_local", gameObject, NetworkObjectId, NetworkManager.Singleton.LocalClientId, GetVelocity());
             if (syncActivate)
             {
                 OnActivateServerRpc(false, NetworkManager.Singleton.LocalClientId);
@@ -599,6 +616,7 @@ namespace XRMultiplayer
             if (IsOwner && IsServer && isInteracting & !baseInteractable.isSelected)
             {
                 m_IsInteracting.Value = false;
+                SetOwnershipReason("OwnerDisconnectRecovery");
             }
 
             // Workaround for NGO calling this always on Server, even if Server is not owner.
@@ -629,6 +647,7 @@ namespace XRMultiplayer
         public override void OnLostOwnership()
         {
             base.OnLostOwnership();
+            SetOwnershipReason("OwnershipLost");
 
             // Have to check ownership since this is always called on the Server
             if (!IsOwner)
@@ -729,6 +748,21 @@ namespace XRMultiplayer
             {
                 ResetObjectToHostServerRpc();
             }
+        }
+
+        void SetOwnershipReason(string reason)
+        {
+            m_LastOwnershipTransferReason = reason;
+            DiagnosticLogger.Log(DiagnosticLogCategory.OwnershipTransfer, $"{name} reason set to {reason}");
+            InteractionTimelineRecorder.Instance?.RecordEvent("ownership_reason", gameObject, NetworkObjectId, OwnerClientId, GetVelocity(), reason);
+        }
+
+        Vector3 GetVelocity()
+        {
+            if (TryGetComponent(out Rigidbody rb))
+                return rb.velocity;
+
+            return Vector3.zero;
         }
 
         /// <summary>
