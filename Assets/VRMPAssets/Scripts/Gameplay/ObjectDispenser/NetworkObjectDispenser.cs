@@ -63,6 +63,7 @@ namespace XRMultiplayer
         [SerializeField] DispenserPanel m_PersistentPanel;
 
         [SerializeField] Transform m_DefaultSpawnTransform;
+        [SerializeField] NetworkModelSpawnService m_ModelSpawnService;
 
         ///<inheritdoc/>
         private void Start()
@@ -228,6 +229,7 @@ namespace XRMultiplayer
                     }
                 }
                 m_CurrentCapacityNetworked.Value = m_ActiveInteractables.Count;
+                m_ModelSpawnService?.DespawnAllUnheld();
             }
         }
 
@@ -346,6 +348,18 @@ namespace XRMultiplayer
                 int randomPanel = UnityEngine.Random.Range(0, m_Panels.Length);
                 int randomSlot = UnityEngine.Random.Range(0, m_Panels[randomPanel].dispenserSlots.Length);
                 spawnObject = m_Panels[randomPanel].dispenserSlots[randomSlot].spawnableInteractablePrefab;
+            }
+
+            if (m_ModelSpawnService != null && spawnObject.TryGetComponent(out NetworkedModelItem modelPrefab))
+            {
+                if (m_ModelSpawnService.TrySpawn(modelPrefab, spawnPosition, spawnRotation, out var spawnedModel))
+                {
+                    spawnedModel.interactionComponent.spawnLocked = false;
+                    m_ActiveInteractables.Add(spawnedModel.interactionComponent);
+                    m_CurrentCapacityNetworked.Value = m_ActiveInteractables.Count;
+                }
+
+                return;
             }
 
             NetworkPhysicsInteractable spawnedObject = Instantiate(spawnObject.gameObject, spawnPosition, spawnRotation).GetComponent<NetworkPhysicsInteractable>();
